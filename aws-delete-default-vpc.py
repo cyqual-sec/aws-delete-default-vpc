@@ -23,6 +23,7 @@ You must provide EXACTLY one of --all, --include, or --exclude"""
 parser = argparse.ArgumentParser(description=description,formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("-d", "--debug", help = "Print debugging statements", action = "store_true")
 parser.add_argument("-p", "--profile", help = "Leverage a pre-configured AWS profile")
+parser.add_argument("-l", "--list", help = "List default VPCs and the number of network interfaces and exit", action = "store_true")
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument("-a", "--all", help = "Remove default VPCs from all regions in account", action = "store_true")
 group.add_argument("-i", "--include", help = "Remove default VPCs from ONLY the proviled region (or comma separated list of regions)")
@@ -39,10 +40,13 @@ if args.debug:
   logger.setLevel(logging.DEBUG)
   logger.debug("Debugging verbosity enabled")
 else:
-  formatter = logging.Formatter("%(levelname)s: %(message)s")
-  handler.setFormatter(formatter)
+  #formatter = logging.Formatter("%(levelname)s: %(message)s")
+  #handler.setFormatter(formatter)
   logger.addHandler(handler)
   logger.setLevel(logging.INFO)
+
+if args.list:
+  logger.info("List only mode - enumerate default VPCs and number of network interfaces, then exit")
 
 profile = args.profile
 if profile is not None:
@@ -61,7 +65,7 @@ if args.exclude is not None:
 # try to use profile (or none) to create session
 try:
   if profile is not None:
-    logger.info("Connecting as profile: " + profile)
+    logger.info("Attempting to connect as profile: " + profile)
   session = boto3.Session(profile_name=profile)
 except:
   logger.error("Invalid profile")
@@ -134,7 +138,7 @@ for region in regions_chosen:
       logger.debug("Attempting to parse the default VPC for region " + region)
       default_vpc = default_vpc_list[0]
       default_vpc_id = default_vpc["VpcId"]
-      logger.info("Found default VPC in region " + region + ": " + default_vpc_id + " - " + default_vpc["CidrBlock"])
+      logger.debug("Found default VPC in region " + region + ": " + default_vpc_id + " - " + default_vpc["CidrBlock"])
     else:
       logger.info("No default VPC found in region " + region)
       # skip to next region
@@ -145,9 +149,14 @@ for region in regions_chosen:
     # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
+  # enumerate number of network intefaces in default VPC and either exit (if "list" flag enabled) or skip if not empty
   try:
     logger.debug("Attempting to enumerate network interfaces in default VPC in region " + region + " with ID " + default_vpc_id)
     interfaces = client_ec2.describe_network_interfaces(Filters=[{"Name":"vpc-id","Values":[default_vpc_id]}])["NetworkInterfaces"]
+    if args.list:
+      # "list" flag provided, so print default VPC information and skip deletion
+      logger.info("Found default VPC in region " + region + " with ID " + default_vpc_id + " and " + str(len(interfaces)) + " network interfaces")
+      continue
     if len(interfaces) > 0:
       logger.warning("Default VPC in region " + region + " with ID " + default_vpc_id + " is not empty with " + str(len(interfaces)) + " network interfaces")
       continue
@@ -158,13 +167,14 @@ for region in regions_chosen:
     # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
+  # delete empty default VPCs
   try:
     confirm = input("Would you like to delete empty default VPC in region " + region + " with ID " + default_vpc_id + "? [y/N] ")
     if confirm.lower() not in ["y","yes"]:
       logger.warning("Skipping deletion of VPC at user request")
       continue
     else:
-      logger.info("Deleting default VPC in region " + region + " with ID " + default_vpc_id + "...")
+      logger.info("Deleting default VPC in region " + region + " with ID " + default_vpc_id + "... - NOT YET")
       # TODO: Delete subnets, etc. and then vpcs
   except:
     logger.error("Unable to delete default VPC in region " + region + " with ID " + default_vpc_id)
