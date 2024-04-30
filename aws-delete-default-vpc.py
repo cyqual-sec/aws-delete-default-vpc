@@ -52,11 +52,11 @@ else:
 
 if args.include is not None:
   regions_include_parsed = args.include.split(",")
-  logger.debug("regions_include_parsed is [" + ",".join(str(region) for region in regions_include_parsed) + "]")
+  logger.debug("regions_include_parsed is " + str(regions_include_parsed))
 
 if args.exclude is not None:
   regions_exclude_parsed = args.exclude.split(",")
-  logger.debug("regions_exclude_parsed is [" + ",".join(str(region) for region in regions_exclude_parsed) + "]")
+  logger.debug("regions_exclude_parsed is " + str(regions_exclude_parsed))
 
 # try to use profile (or none) to create session
 try:
@@ -65,6 +65,7 @@ try:
   session = boto3.Session(profile_name=profile)
 except:
   logger.error("Invalid profile")
+  logger.debug("Note that connection errors could be due to IAM permissions or SCP restrictions")
   exit()
 
 # try to get account number and user context
@@ -76,6 +77,7 @@ try:
   logger.debug("Successfully enumerated session information")
 except:
   logger.error("Unable to enumerate session")
+  logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
   exit()
 
 # verify this is the correct account and user!
@@ -116,12 +118,13 @@ try:
   logger.info("Enumerating default VPCs for the following regions:" + str(regions_chosen))
 except:
   logger.error("Unable to describe regions in the account")
+  logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
   exit()
 
 # enumerate default VPCs in regions and request deletion
 for region in regions_chosen:
   default_vpc_id = ""
-  logger.debug("Enumerating default VPCs for region " + region)
+  logger.debug("Working specifically with region " + region)
   try:
     logger.debug("Creating new Boto3 EC2 client for region " + region)
     client_ec2 = session.client("ec2", region_name=region)
@@ -138,6 +141,7 @@ for region in regions_chosen:
       continue
   except:
     logger.error("Unable to enumerate default VPCs for region " + region)
+    logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
     # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
@@ -145,11 +149,13 @@ for region in regions_chosen:
     logger.debug("Attempting to enumerate network interfaces in default VPC in region " + region + " with ID " + default_vpc_id)
     interfaces = client_ec2.describe_network_interfaces(Filters=[{"Name":"vpc-id","Values":[default_vpc_id]}])["NetworkInterfaces"]
     if len(interfaces) > 0:
-      logger.warning("default VPC in region " + region + " with ID " + default_vpc_id + " is not empty with " + count(interfaces) + " network interfaces")
+      logger.warning("Default VPC in region " + region + " with ID " + default_vpc_id + " is not empty with " + str(len(interfaces)) + " network interfaces")
       continue
     logger.debug("No network interfaces found for default VPC in region " + region + " with ID " + default_vpc_id)
   except:
     logger.error("Problem enumerating network interfaces for default VPC in region " + region + " with ID " + default_vpc_id)
+    logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
+    # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
   try:
