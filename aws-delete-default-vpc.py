@@ -174,8 +174,28 @@ for region in regions_chosen:
       logger.warning("Skipping deletion of VPC at user request")
       continue
     else:
-      logger.info("Deleting default VPC in region " + region + " with ID " + default_vpc_id + "... - NOT YET")
-      # TODO: Delete subnets, etc. and then vpcs
+      logger.info("Deleting default VPC in region " + region + " with ID " + default_vpc_id + "...")
+
+      igw_list = client_ec2.describe_internet_gateways(Filters=[{"Name": "attachment.vpc-id", "Values": [default_vpc_id]}])["InternetGateways"]
+      if len(igw_list) != 1:
+        print("error")
+      else:
+        igw_id = igw_list[0]["InternetGatewayId"]
+        print(igw_id)
+        client_ec2.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=default_vpc_id)
+        client_ec2.delete_internet_gateway(InternetGatewayId=igw_id)
+
+      subnet_list = client_ec2.describe_subnets(Filters=[{"Name":"vpc-id", "Values":[default_vpc_id]}])["Subnets"]
+      if len(subnet_list) != 1:
+        print("error)")
+      else:
+        for subnet in subnet_list:
+          subnet_id =  subnet["SubnetId"]
+          client_ec2.delete_subnet(SubnetId=subnet_id)
+
+      client_ec2.delete_vpc(VpcId=default_vpc_id)
   except:
     logger.error("Unable to delete default VPC in region " + region + " with ID " + default_vpc_id)
     continue
+
+  # TODO: Remove default DHCP option set?
