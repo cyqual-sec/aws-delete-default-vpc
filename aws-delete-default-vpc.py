@@ -21,19 +21,20 @@ Deletes the default VPC from the selected regions
 Requires valid AWS credentials - either provide a profile name or leave blank to leverage the environment
 You must provide EXACTLY one of --all, --include, or --exclude"""
 parser = argparse.ArgumentParser(description=description,formatter_class=argparse.RawTextHelpFormatter)
-parser.add_argument("-d", "--debug", help = "Print debugging statements", action = "store_true")
+parser.add_argument("-v", "--verbose", help = "Print verbose statements for debugging", action = "store_true")
 parser.add_argument("-p", "--profile", help = "Leverage a pre-configured AWS profile")
-parser.add_argument("-l", "--list", help = "List default VPCs and the number of network interfaces and exit", action = "store_true")
-group = parser.add_mutually_exclusive_group(required=True)
-group.add_argument("-a", "--all", help = "Remove default VPCs from all regions in account", action = "store_true")
-group.add_argument("-i", "--include", help = "Remove default VPCs from ONLY the proviled region (or comma separated list of regions)")
-group.add_argument("-e", "--exclude", help = "Remove default VPCs from ALL regions EXCEPT the provided region (or comma separated list of regions)")
+parser.add_argument("-l", "--list", help = "Only list default VPCs and their number of network interfaces and exit", action = "store_true")
+group_regions = parser.add_argument_group("AWS Regions", "The AWS regions to enumerate (e.g., us-east-1)")
+group_regions_exclusive = group_regions.add_mutually_exclusive_group(required=True)
+group_regions_exclusive.add_argument("-a", "--all", help = "Remove default VPCs from all regions in account", action = "store_true")
+group_regions_exclusive.add_argument("-i", "--include", help = "Remove default VPCs from ONLY the proviled region (or comma separated list of regions)")
+group_regions_exclusive.add_argument("-e", "--exclude", help = "Remove default VPCs from ALL regions EXCEPT the provided region (or comma separated list of regions)")
 args = parser.parse_args()
 
 # set up logging
 logger = logging.getLogger("aws-delete-default-vpcs")
 handler = logging.StreamHandler(sys.stdout)
-if args.debug:
+if args.verbose:
   formatter = logging.Formatter("%(asctime)s - %(levelname)s: %(message)s")
   handler.setFormatter(formatter)
   logger.addHandler(handler)
@@ -127,6 +128,7 @@ except:
 
 # enumerate default VPCs in regions and request deletion
 for region in regions_chosen:
+  default_vpc = ""
   default_vpc_id = ""
   logger.debug("Working specifically with region " + region)
   try:
@@ -138,6 +140,7 @@ for region in regions_chosen:
       logger.debug("Attempting to parse the default VPC for region " + region)
       default_vpc = default_vpc_list[0]
       default_vpc_id = default_vpc["VpcId"]
+      default_dhcp_options_id = default_vpc["DhcpOptionsId"]
       logger.debug("Found default VPC in region " + region + ": " + default_vpc_id + " - " + default_vpc["CidrBlock"])
     else:
       logger.info("No default VPC found in region " + region)
@@ -175,27 +178,51 @@ for region in regions_chosen:
       continue
     else:
       logger.info("Deleting default VPC in region " + region + " with ID " + default_vpc_id + "...")
-
+      logger.debug("Enumerating internet gatways for default VPC in region " + region + " with ID " + default_vpc_id)
       igw_list = client_ec2.describe_internet_gateways(Filters=[{"Name": "attachment.vpc-id", "Values": [default_vpc_id]}])["InternetGateways"]
-      if len(igw_list) != 1:
-        print("error")
+      if len(igw_list) == 0:
+        logger.error("Did not detect an internet gateway for default VPC in region " + region + " with ID " + default_vpc_id)
+        # TODO: reenable
+        # continue
       else:
         igw_id = igw_list[0]["InternetGatewayId"]
-        print(igw_id)
+        logger.debug("Found internet gateway with ID " + igw_id + " for default VPC in region " + region + " with ID " + default_vpc_id)
+        logger.debug("Detaching internet gateway with ID " + igw_id + " for default VPC in region " + region + " with ID " + default_vpc_id)
         client_ec2.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=default_vpc_id)
+        logger.debug("Deleting internet gateway with ID " + igw_id + " for default VPC in region " + region + " with ID " + default_vpc_id)
         client_ec2.delete_internet_gateway(InternetGatewayId=igw_id)
 
+      logger.debug("Enumerating subnets for default VPC in region " + region + " with ID " + default_vpc_id)
       subnet_list = client_ec2.describe_subnets(Filters=[{"Name":"vpc-id", "Values":[default_vpc_id]}])["Subnets"]
-      if len(subnet_list) != 1:
-        print("error)")
+      if len(subnet_list) == 0:
+        logger.error("Did not detect subnets for default VPC in region " + region + " with ID " + default_vpc_id)
+        # TODO: reenable
+        # continue
       else:
+        logger.debug("Found " + str(len(subnet_list)) + " subnets for default VPC in region " + region + " with ID " + default_vpc_id)
         for subnet in subnet_list:
           subnet_id =  subnet["SubnetId"]
+          logger.debug("Deleting subnet with ID " + subnet_id + " for default VPC in region " + region + " with ID " + default_vpc_id)
           client_ec2.delete_subnet(SubnetId=subnet_id)
 
+      logger.debug("Deleting default VPC in region " + region + " with ID " + default_vpc_id)
       client_ec2.delete_vpc(VpcId=default_vpc_id)
   except:
     logger.error("Unable to delete default VPC in region " + region + " with ID " + default_vpc_id)
     continue
 
-  # TODO: Remove default DHCP option set?
+  # remove default DHCP option set
+  try:
+    logger.debug("Checking for default dhcp options set usage in region " + region + " with ID " + default_dhcp_options_id)
+    dhcp_options_vpc_list = client_ec2.describe_vpcs(Filters=[{"Name":"dhcp-options-id","Values":[default_dhcp_options_id]}])["Vpcs"]
+    if len(dhcp_options_vpc_list) == 0:
+      confirm = input("Would you like to delete the unused default DHCP option set in region " + region + " with ID " + default_dhcp_options_id + "? [y/N] ")
+      if confirm.lower() not in ["y","yes"]:
+        logger.warning("Skipping deletion of VPC at user request")
+      else:
+        client_ec2.delete_dhcp_options(DhcpOptionsId=default_dhcp_options_id)
+    else:
+      logger.warning("DHCP options set with ID " + default_dhcp_options_id + " is used by another VPC and cannot be deleted")
+  except:
+    logger.error("Problem enumerating DHCP option set usage or deleting an unsed one in region " + region)
+    continue
