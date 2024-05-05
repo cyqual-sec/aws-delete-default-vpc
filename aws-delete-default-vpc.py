@@ -16,18 +16,17 @@ regions_exclude_parsed = []
 regions_chosen = []
 
 # handle input
-description = """AWS Delete Default VPC
-Deletes the default VPC from the selected regions
-Requires valid AWS credentials - either provide a profile name or leave blank to leverage the environment
-You must provide EXACTLY one of --all, --include, or --exclude"""
+description = """Deletes the default VPC from the selected regions
+- Requires valid AWS credentials - either provide a profile name or leave blank to leverage the environment
+- You must provide EXACTLY one of --all, --include, or --exclude"""
 parser = argparse.ArgumentParser(description=description,formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("-v", "--verbose", help = "Print verbose statements for debugging", action = "store_true")
 parser.add_argument("-p", "--profile", help = "Leverage a pre-configured AWS profile")
 parser.add_argument("-l", "--list", help = "Only list default VPCs and their number of network interfaces and exit", action = "store_true")
-group_regions = parser.add_argument_group("AWS Regions", "The AWS regions to enumerate (e.g., us-east-1)")
+group_regions = parser.add_argument_group("AWS regions", "Specify the AWS regions to enumerate (e.g., us-east-1)")
 group_regions_exclusive = group_regions.add_mutually_exclusive_group(required=True)
 group_regions_exclusive.add_argument("-a", "--all", help = "Remove default VPCs from all regions in account", action = "store_true")
-group_regions_exclusive.add_argument("-i", "--include", help = "Remove default VPCs from ONLY the proviled region (or comma separated list of regions)")
+group_regions_exclusive.add_argument("-i", "--include", help = "Remove default VPCs from ONLY the provided region (or comma separated list of regions)")
 group_regions_exclusive.add_argument("-e", "--exclude", help = "Remove default VPCs from ALL regions EXCEPT the provided region (or comma separated list of regions)")
 args = parser.parse_args()
 
