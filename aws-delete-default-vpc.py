@@ -68,9 +68,10 @@ try:
   if profile is not None:
     logger.info("Attempting to connect as profile: " + profile)
   session = boto3.Session(profile_name=profile)
-except:
-  logger.error("Invalid profile")
-  logger.debug("Note that connection errors could be due to IAM permissions or SCP restrictions")
+except Exception as e:
+  logger.error("Invalid or disconnected profile")
+  logger.debug("Note that connection errors could be due to expired keys, missing IAM permissions, or SCP restrictions")
+  logger.debug(e)
   exit()
 
 # try to get account number and user context
@@ -80,9 +81,10 @@ try:
   account_id = caller_identity.get("Account")
   user_id = caller_identity.get("UserId")
   logger.debug("Successfully enumerated session information")
-except:
+except Exception as e:
   logger.error("Unable to enumerate session")
-  logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
+  logger.debug("Note that errors enumerating resources could be due to missing IAM permissions or SCP restrictions")
+  logger.debug(e)
   exit()
 
 # verify this is the correct account and user!
@@ -91,12 +93,13 @@ if confirm.lower() not in ["y","yes"]:
   logger.warning("You must type 'yes' to proceed. Exiting...")
   exit()
 
-# build client
+# build client to enumerate regions
 try:
   client_ec2 = session.client("ec2")
   logger.debug("Successfully built client")
-except:
+except Exception as e:
   logger.error("Unable to connect clients to session")
+  logger.debug(e)
   exit()
 
 # get list of regions from account
@@ -104,9 +107,30 @@ try:
   regions_described_raw = client_ec2.describe_regions()
   logger.debug("Successfully described regions")
   regions_enabled_raw = regions_described_raw['Regions']
+  regions_enabled = []
+
+  logger.debug("Parsing raw region list and extracting region names")
   for region_raw in regions_enabled_raw:
-    region_name = region_raw['RegionName']
-    logger.debug("Found region " + region_name)
+    logger.debug("Found region " + region_raw['RegionName'])
+    regions_enabled.append(region_raw['RegionName'])
+
+  # check if any included or excluded regions were provided and available (to catch misspellings)
+  if args.include is not None:
+    logger.debug("Validating that provided regions to include are enabled")
+    regions_include_missing = list(set(regions_include_parsed)-set(regions_enabled))
+    if len(regions_include_missing) > 0:
+      logger.error("The following provided regions to include are not available  " + str(regions_include_missing))
+      exit()
+
+  if args.exclude is not None:
+    logger.debug("Validating that provided regions to exclude are enabled")
+    regions_exclude_missing = list(set(regions_exclude_parsed)-set(regions_enabled))
+    if len(regions_exclude_missing) > 0:
+      logger.error("The following provided regions to exclude are not available  " + str(regions_exclude_missing))
+      exit()
+
+  # create list of regions to work on by applying user input to enabled regions
+  for region_name in regions_enabled:
     if args.all == True:
       # enumerate all regions, so include this
       regions_chosen.append(region_name)
@@ -121,9 +145,10 @@ try:
       logger.debug("Successfully added region to enumerate because not in excluded regions")
 
   logger.info("Enumerating default VPCs for the following regions:" + str(regions_chosen))
-except:
+except Exception as e:
   logger.error("Unable to describe regions in the account")
   logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
+  logger.debug(e)
   exit()
 
 # enumerate default VPCs in regions and request deletion
@@ -146,9 +171,10 @@ for region in regions_chosen:
       logger.info("No default VPC found in region " + region)
       # skip to next region
       continue
-  except:
+  except Exception as e:
     logger.error("Unable to enumerate default VPCs for region " + region)
     logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
+    logger.debug(e)
     # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
@@ -164,9 +190,10 @@ for region in regions_chosen:
       logger.warning("Default VPC in region " + region + " with ID " + default_vpc_id + " is not empty with " + str(len(interfaces)) + " network interfaces")
       continue
     logger.debug("No network interfaces found for default VPC in region " + region + " with ID " + default_vpc_id)
-  except:
+  except Exception as e:
     logger.error("Problem enumerating network interfaces for default VPC in region " + region + " with ID " + default_vpc_id)
     logger.debug("Note that errors enumerating resources could be due to IAM permissions or SCP restrictions")
+    logger.debug(e)
     # don't exit the program - we could be blocked by an SCP, so still try other regions
     continue
 
@@ -182,8 +209,7 @@ for region in regions_chosen:
       igw_list = client_ec2.describe_internet_gateways(Filters=[{"Name": "attachment.vpc-id", "Values": [default_vpc_id]}])["InternetGateways"]
       if len(igw_list) == 0:
         logger.error("Did not detect an internet gateway for default VPC in region " + region + " with ID " + default_vpc_id)
-        # TODO: reenable
-        # continue
+        continue
       else:
         igw_id = igw_list[0]["InternetGatewayId"]
         logger.debug("Found internet gateway with ID " + igw_id + " for default VPC in region " + region + " with ID " + default_vpc_id)
@@ -196,8 +222,7 @@ for region in regions_chosen:
       subnet_list = client_ec2.describe_subnets(Filters=[{"Name":"vpc-id", "Values":[default_vpc_id]}])["Subnets"]
       if len(subnet_list) == 0:
         logger.error("Did not detect subnets for default VPC in region " + region + " with ID " + default_vpc_id)
-        # TODO: reenable
-        # continue
+        continue
       else:
         logger.debug("Found " + str(len(subnet_list)) + " subnets for default VPC in region " + region + " with ID " + default_vpc_id)
         for subnet in subnet_list:
@@ -207,8 +232,9 @@ for region in regions_chosen:
 
       logger.debug("Deleting default VPC in region " + region + " with ID " + default_vpc_id)
       client_ec2.delete_vpc(VpcId=default_vpc_id)
-  except:
+  except Exception as e:
     logger.error("Unable to delete default VPC in region " + region + " with ID " + default_vpc_id)
+    logger.debug(e)
     continue
 
   # remove default DHCP option set
@@ -223,6 +249,7 @@ for region in regions_chosen:
         client_ec2.delete_dhcp_options(DhcpOptionsId=default_dhcp_options_id)
     else:
       logger.warning("DHCP options set with ID " + default_dhcp_options_id + " is used by another VPC and cannot be deleted")
-  except:
+  except Exception as e:
     logger.error("Problem enumerating DHCP option set usage or deleting an unsed one in region " + region)
+    logger.debug(e)
     continue
