@@ -23,6 +23,7 @@ parser = argparse.ArgumentParser(description=description,formatter_class=argpars
 parser.add_argument("-v", "--verbose", help = "Print verbose statements for debugging", action = "store_true")
 parser.add_argument("-p", "--profile", help = "Leverage a pre-configured AWS profile")
 parser.add_argument("-l", "--list", help = "Only list default VPCs and their number of network interfaces and exit", action = "store_true")
+parser.add_argument("-y", "--yolo", help = "Don't ask for confirmation to delete VPCs and DHCP option sets", action = "store_true")
 group_regions = parser.add_argument_group("AWS regions", "Specify the AWS regions to enumerate (e.g., us-east-1)")
 group_regions_exclusive = group_regions.add_mutually_exclusive_group(required=True)
 group_regions_exclusive.add_argument("-a", "--all", help = "Remove default VPCs from all regions in account", action = "store_true")
@@ -45,8 +46,16 @@ else:
   logger.addHandler(handler)
   logger.setLevel(logging.INFO)
 
+if args.list and args.yolo:
+  logger.error("How can we only list and also yolo delete?")
+  logger.debug("Both args.list and args.yolo shouldn't be set")
+  exit()
+
 if args.list:
   logger.info("List only mode - enumerate default VPCs and number of network interfaces, then exit")
+
+if args.yolo:
+  logger.info("Auto-accepting deletion of default VPCs and DHCP option sets")
 
 profile = args.profile
 if profile is not None:
@@ -198,7 +207,10 @@ for region in regions_chosen:
 
   # delete empty default VPCs
   try:
-    confirm = input("Would you like to delete empty default VPC in region " + region + " with ID " + default_vpc_id + "? [y/N] ")
+    if not args.yolo:
+      confirm = input("Would you like to delete empty default VPC in region " + region + " with ID " + default_vpc_id + "? [y/N] ")
+    else:
+      confirm = "yes" # yolo
     if confirm.lower() not in ["y","yes"]:
       logger.warning("Skipping deletion of VPC at user request")
       continue
@@ -241,7 +253,10 @@ for region in regions_chosen:
     logger.debug("Checking for default dhcp options set usage in region " + region + " with ID " + default_dhcp_options_id)
     dhcp_options_vpc_list = client_ec2.describe_vpcs(Filters=[{"Name":"dhcp-options-id","Values":[default_dhcp_options_id]}])["Vpcs"]
     if len(dhcp_options_vpc_list) == 0:
-      confirm = input("Would you like to delete the unused default DHCP option set in region " + region + " with ID " + default_dhcp_options_id + "? [y/N] ")
+      if not args.yolo:
+        confirm = input("Would you like to delete the unused default DHCP option set in region " + region + " with ID " + default_dhcp_options_id + "? [y/N] ")
+      else:
+        confirm = "yes" # yolo
       if confirm.lower() not in ["y","yes"]:
         logger.warning("Skipping deletion of VPC at user request")
       else:
